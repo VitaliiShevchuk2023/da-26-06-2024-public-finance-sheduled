@@ -6,6 +6,7 @@ import schedule
 import time
 import os
 import logging
+import altair as alt
 
 # Налаштування логування
 logging.basicConfig(filename='output.log', level=logging.INFO)
@@ -102,28 +103,68 @@ def scheduled_etl():
 # Налаштування розкладу виконання ETL
 schedule.every().day.at("20:00").do(scheduled_etl)
 
-# Web-інтерфейс Streamlit
 def app():
-    st.title("Data Analytics Dashboard")
+    st.set_page_config(page_title="Допомога ЗСУ від громад Київської області", layout="wide")
+
+    st.title("Яка громада Київської області найбільше допомагає ЗСУ?")
     
-    # Завантаження даних з CSV
+    with st.sidebar:
+        st.header("Фільтри")
+        # Додайте фільтри тут (наприклад, вибір дати або громади)
+
+    st.markdown("""
+        <style>
+        .stApp {
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     if os.path.exists("dataset/transactiondata_full.csv"):
         df = pd.read_csv("dataset/transactiondata_full.csv")
-        st.write(f"Total records: {len(df)}")
+        st.write(f"Загальна кількість записів: {len(df)}")
+
+        df['trans_date'] = pd.to_datetime(df['trans_date'], errors='coerce')
+        df = df.dropna(subset=['trans_date'])
+
+        start_date = pd.to_datetime('2022-02-24')
+        end_date = pd.to_datetime('now')
+        df_filtered = df[(df['trans_date'] >= start_date) & (df['trans_date'] <= end_date)]
         
-        # Відображення таблиці даних
-        st.dataframe(df.head(10))
+        st.header("Аналіз отримувачів коштів")
+        top_recipients = df_filtered.groupby('recipt_name')['amount'].sum().reset_index()
+        top_recipients = top_recipients.sort_values(by='amount', ascending=False).head(10)
+        st.bar_chart(top_recipients.set_index('recipt_name'))
+
+        st.subheader("Сукупні витрати за часом")
+        cumulative_spending = df_filtered.groupby(df_filtered['trans_date'].dt.date)['amount'].sum().cumsum()
+        st.line_chart(cumulative_spending)
+
+        st.subheader("Кількість транзакцій по дням тижня")
+        df_filtered['day_of_week'] = df_filtered['trans_date'].dt.day_name()
+        transactions_by_day = df_filtered['day_of_week'].value_counts().sort_index()
+        st.bar_chart(transactions_by_day)
+
+        keywords = ['ЗСУ',  'армія', 'оборона']
+        df_filtered = df_filtered[df_filtered['payment_details'].str.contains('|'.join(keywords), case=False, na=False)]
+
+        df_grouped = df_filtered.groupby('payer_name')['amount'].sum().reset_index()
+        df_grouped = df_grouped.sort_values(by='amount', ascending=False)
         
-        # Фільтрація даних за вибраним ЄДРПОУ
-        edrpou_filter = st.text_input("Enter EDRPOU code to filter", "")
-        if edrpou_filter:
-            filtered_df = df[(df['payer_edrpou'] == edrpou_filter) | (df['recipt_edrpou'] == edrpou_filter)]
-            st.write(f"Total filtered records: {len(filtered_df)}")
-            st.dataframe(filtered_df)
-            
-        # Візуалізація даних
-        st.write("### Data Visualization")
-        st.bar_chart(df['amount'])
+        st.header("Топ-10 громад за витратами на оборону")
+        st.dataframe(df_grouped.head(10))        
+
+        st.subheader("Витрати на допомогу ЗСУ по кожній громаді")
+        st.bar_chart(df_grouped.set_index('payer_name')['amount']) 
+
+        st.subheader("Щоденна кількість транзакцій")
+        daily_transaction_count = df['trans_date'].dt.date.value_counts().sort_index()
+        st.bar_chart(daily_transaction_count)   
+
     else:
         st.write("Data file not found. Please run the ETL process first.")
     
@@ -134,4 +175,3 @@ if __name__ == "__main__":
     while True:
         schedule.run_pending()
         time.sleep(60)  # Перевірка розкладу кожні 60 секунд
-
